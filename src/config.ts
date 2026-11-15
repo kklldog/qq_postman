@@ -1,10 +1,5 @@
 import 'dotenv/config';
-
-function required(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`Missing required environment variable: ${name}`);
-  return value;
-}
+import { existsSync, readFileSync } from 'node:fs';
 
 function numberEnv(name: string, fallback: number): number {
   const value = process.env[name];
@@ -24,7 +19,9 @@ function booleanEnv(name: string, fallback: boolean): boolean {
 
 export interface Config {
   http: { host: string; port: number; apiKey?: string };
+  adminApiKey?: string;
   account: { email: string; authCode: string };
+  accountFile: string;
   smtp: { host: string; port: number; secure: boolean };
   imap: { host: string; port: number; secure: boolean; mailbox: string };
   watcher: {
@@ -43,6 +40,13 @@ export interface Config {
 }
 
 export function loadConfig(): Config {
+  const accountFile = process.env.ACCOUNT_CONFIG_FILE?.trim() || 'data/mail-account.json';
+  const persistedAccount = readPersistedAccount(accountFile);
+  const email = persistedAccount?.email || process.env.QQ_EMAIL?.trim();
+  const authCode = persistedAccount?.authCode || process.env.SMTP_AUTHCODE?.trim();
+  if (!email || !authCode) {
+    throw new Error('Missing QQ account configuration. Set QQ_EMAIL and SMTP_AUTHCODE or configure it in the web page.');
+  }
   const webhookUrl = process.env.WEBHOOK_URL?.trim();
   const webhook = webhookUrl
     ? {
@@ -59,7 +63,9 @@ export function loadConfig(): Config {
       port: numberEnv('PORT', 3000),
       apiKey: process.env.API_KEY?.trim() || undefined,
     },
-    account: { email: required('QQ_EMAIL'), authCode: required('SMTP_AUTHCODE') },
+    adminApiKey: process.env.ADMIN_API_KEY?.trim() || process.env.API_KEY?.trim() || undefined,
+    account: { email, authCode },
+    accountFile,
     smtp: {
       host: process.env.SMTP_HOST?.trim() || 'smtp.qq.com',
       port: numberEnv('SMTP_PORT', 465),
@@ -80,4 +86,17 @@ export function loadConfig(): Config {
     },
     webhook,
   };
+}
+
+function readPersistedAccount(file: string): { email: string; authCode: string } | undefined {
+  if (!existsSync(file)) return undefined;
+  try {
+    const value = JSON.parse(readFileSync(file, 'utf8')) as Partial<{ email: string; authCode: string }>;
+    if (typeof value.email !== 'string' || typeof value.authCode !== 'string') return undefined;
+    if (!value.email.trim() || !value.authCode.trim()) return undefined;
+    return { email: value.email.trim(), authCode: value.authCode.trim() };
+  } catch (error) {
+    console.error('Could not read persisted QQ account configuration:', error);
+    return undefined;
+  }
 }

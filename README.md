@@ -35,6 +35,10 @@ npm start
 
 默认监听 `http://localhost:3000`。
 
+打开 `http://localhost:3000/` 可以在页面配置 QQ 邮箱和 `SMTP_AUTHCODE`。点击“保存并重新监听”后，服务会保存账号配置、重建 SMTP 客户端并重启 IMAP 监听。授权码不会从接口返回；页面上的授权码输入框留空时会保留当前授权码。
+
+页面配置接口使用 `ADMIN_API_KEY`；如果没有设置，则沿用 `API_KEY`。未配置密钥时适合内网开发环境，生产环境建议设置 `ADMIN_API_KEY`。
+
 ## 发信接口
 
 `POST /api/send` 接收 JSON。`to` 可以是字符串或字符串数组，必须提供 `text` 或 `html` 之一。

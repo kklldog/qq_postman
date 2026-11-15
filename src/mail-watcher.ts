@@ -38,6 +38,9 @@ export class MailWatcher {
   private lastError: string | undefined;
   private lastMessageAt: string | undefined;
   private connected = false;
+  private loopPromise: Promise<void> | undefined;
+  private sleepTimer: NodeJS.Timeout | undefined;
+  private sleepResolve: (() => void) | undefined;
   private readonly store: UidStore;
 
   constructor(private readonly config: Config, private readonly hub: MailEventHub) {
@@ -59,13 +62,17 @@ export class MailWatcher {
     if (this.running) return;
     this.running = true;
     this.lastUid = (await this.store.read()) ?? 0;
-    void this.loop();
+    this.loopPromise = this.loop();
   }
 
   async stop(): Promise<void> {
+    if (!this.running && !this.loopPromise) return;
     this.running = false;
     this.connected = false;
+    this.cancelSleep();
     while (this.cycleInProgress) await new Promise((resolve) => setTimeout(resolve, 50));
+    await this.loopPromise;
+    this.loopPromise = undefined;
   }
 
   private async loop(): Promise<void> {
@@ -80,8 +87,27 @@ export class MailWatcher {
         console.error('IMAP watcher error:', error);
         backoff = Math.min(Math.max(backoff * 2, 1_000), 120_000);
       }
-      if (this.running) await new Promise((resolve) => setTimeout(resolve, backoff));
+      if (this.running) await this.sleep(backoff);
     }
+  }
+
+  private sleep(milliseconds: number): Promise<void> {
+    return new Promise((resolve) => {
+      this.sleepResolve = resolve;
+      this.sleepTimer = setTimeout(() => {
+        this.sleepTimer = undefined;
+        this.sleepResolve = undefined;
+        resolve();
+      }, milliseconds);
+    });
+  }
+
+  private cancelSleep(): void {
+    if (this.sleepTimer) clearTimeout(this.sleepTimer);
+    this.sleepTimer = undefined;
+    const resolve = this.sleepResolve;
+    this.sleepResolve = undefined;
+    resolve?.();
   }
 
   private async scanOnce(): Promise<void> {

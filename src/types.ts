@@ -53,3 +53,10 @@ export interface WatcherStatus {
   lastError?: string;
   lastMessageAt?: string;
 }
+
+export interface PublicSettings {
+  email: string;
+  hasAuthCode: boolean;
+  configured: boolean;
+  watcher: WatcherStatus;
+}

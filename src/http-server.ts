@@ -3,7 +3,9 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import type { Config } from './config.js';
 import type { MailEventHub } from './event-hub.js';
 import type { MailSender } from './mail-sender.js';
-import type { IncomingMail, SendMailInput } from './types.js';
+import { writeAccountConfig } from './account-config.js';
+import { settingsPage } from './settings-page.js';
+import type { IncomingMail, PublicSettings, SendMailInput } from './types.js';
 import type { MailWatcher } from './mail-watcher.js';
 
 function authorized(request: FastifyRequest, apiKey?: string): boolean {
@@ -43,11 +45,61 @@ export function buildHttpServer(
   const app = Fastify({ logger: true, bodyLimit: 32 * 1024 * 1024 });
   let externalSubscriberCount = 0;
 
+  const publicSettings = (): PublicSettings => ({
+    email: config.account.email,
+    hasAuthCode: Boolean(config.account.authCode),
+    configured: Boolean(config.account.email && config.account.authCode),
+    watcher: watcher.getStatus(),
+  });
+
+  app.get('/', async (_request, reply) => reply.type('text/html; charset=utf-8').send(settingsPage));
+  app.get('/settings', async (_request, reply) => reply.type('text/html; charset=utf-8').send(settingsPage));
+
   app.get('/health', async () => ({
     status: watcher.getStatus().lastError ? 'degraded' : 'ok',
     watcher: watcher.getStatus(),
     subscribers: externalSubscriberCount,
   }));
+
+  app.get('/api/settings', async (request, reply) => {
+    if (!authorized(request, config.adminApiKey)) return reply.code(401).send({ error: 'unauthorized' });
+    return publicSettings();
+  });
+
+  app.put('/api/settings', async (request, reply) => {
+    if (!authorized(request, config.adminApiKey)) return reply.code(401).send({ error: 'unauthorized' });
+    const body = request.body as { email?: unknown; authCode?: unknown } | undefined;
+    const email = typeof body?.email === 'string' ? body.email.trim() : '';
+    const authCode = typeof body?.authCode === 'string' ? body.authCode.trim() : '';
+    if (!email) return reply.code(400).send({ error: 'email_required', message: '请填写邮箱账号。' });
+    if (email !== config.account.email && !authCode) {
+      return reply.code(400).send({ error: 'auth_code_required', message: '切换邮箱时必须填写新的授权码。' });
+    }
+
+    const nextAuthCode = authCode || config.account.authCode;
+    try {
+      await writeAccountConfig(config.accountFile, { email, authCode: nextAuthCode });
+      await watcher.stop();
+      sender.updateCredentials(email, nextAuthCode);
+      await watcher.start();
+      return publicSettings();
+    } catch (error) {
+      request.log.error(error, 'Could not update QQ account configuration');
+      return reply.code(500).send({ error: 'settings_update_failed', message: '保存配置失败，请检查服务日志。' });
+    }
+  });
+
+  app.post('/api/settings/restart', async (request, reply) => {
+    if (!authorized(request, config.adminApiKey)) return reply.code(401).send({ error: 'unauthorized' });
+    try {
+      await watcher.stop();
+      await watcher.start();
+      return publicSettings();
+    } catch (error) {
+      request.log.error(error, 'Could not restart IMAP watcher');
+      return reply.code(500).send({ error: 'watcher_restart_failed', message: '重新监听失败，请检查服务日志。' });
+    }
+  });
 
   app.post('/api/send', async (request, reply) => {
     if (!authorized(request, config.http.apiKey)) return reply.code(401).send({ error: 'unauthorized' });
