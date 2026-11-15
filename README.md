@@ -113,6 +113,21 @@ X-QQ-Postman-Signature: HMAC-SHA256(body, WEBHOOK_SECRET)
 }
 ```
 
+## 服务目录注册（可选）
+
+设置 `INDEX_URL` 后，服务在 HTTP 监听启动后会把自身描述（`id: qq-postman`，含 `/health`、`/api/send`、`/api/subscribe` 接口说明）注册到 [my-service-index](http://192.168.0.126:8790/protocol.md)。`INDEX_URL` 留空则完全关闭，不读取凭据。
+
+```env
+INDEX_URL=http://192.168.0.126:8790
+PUBLIC_SERVICE_URL=http://192.168.0.126:3000
+INDEX_API_TOKEN_FILE=/path/outside/project/index-token
+```
+
+- `PUBLIC_SERVICE_URL` 是其他项目实际可访问的地址，不是容器内的 `localhost`。
+- `INDEX_API_TOKEN` 与 `INDEX_API_TOKEN_FILE` 只能配置一个；它是 index 的写入凭据，与本服务的 `API_KEY` 无关，不会写入注册内容。文件建议放在项目外并设为 `600`。
+- 设置了 `API_KEY` 时注册的鉴权方式为 `apiKey`（`x-api-key`），否则为 `none`；密钥本身不会注册。
+- 注册失败会记录日志并有限退避重试（最多 5 次），不影响收发信功能。配置错误会在启动时直接报错。
+
 ## 配置说明
 
 完整配置见 `.env.example`。QQ 默认服务器是 `smtp.qq.com:465`（SSL）和 `imap.qq.com:993`（SSL）。首次启动默认只监听启动后的新邮件；如需把现有邮件也推送一次，设置 `MAIL_INITIAL_SYNC=true`。

@@ -3,9 +3,12 @@ import { loadConfig } from './config.js';
 import { MailEventHub } from './event-hub.js';
 import { MailSender } from './mail-sender.js';
 import { MailWatcher } from './mail-watcher.js';
+import { buildRegistration, loadIndexConfig, registerWithRetry } from './registry.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  const index = loadIndexConfig();
+  const registration = new AbortController();
   const hub = new MailEventHub();
   const sender = new MailSender(config);
   const watcher = new MailWatcher(config, hub);
@@ -15,8 +18,20 @@ async function main(): Promise<void> {
   await watcher.start();
   app.log.info(`QQ Postman listening on http://${config.http.host}:${config.http.port}`);
 
+  if (index) {
+    registerWithRetry(index, buildRegistration(config, index.baseUrl), {
+      signal: registration.signal,
+      onRetry: (error, attempt) => app.log.warn({ err: error, attempt }, 'Index registration failed, retrying'),
+    })
+      .then(({ outcome }) => app.log.info(`Index registration: ${outcome}`))
+      .catch((error) => {
+        if (!registration.signal.aborted) app.log.error({ err: error }, 'Index registration failed');
+      });
+  }
+
   const shutdown = async (signal: string) => {
     app.log.info(`Received ${signal}, shutting down`);
+    registration.abort();
     await watcher.stop();
     await app.close();
     process.exit(0);
